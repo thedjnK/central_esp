@@ -1,0 +1,17 @@
+manifest:
+  remotes:
+    - name: zephyr
+      url-base: https://github.com/zephyrproject-rtos
+
+  projects:
+    - name: zephyr
+      remote: zephyr
+      revision: main
+      import:
+        name-allowlist:
+          - cmsis
+          - hal_nordic
+          - tinycrypt
+
+  self:
+    path: central_esp
