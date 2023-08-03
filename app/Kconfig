@@ -48,7 +48,7 @@ menuconfig APP_BATTERY_LEVEL
 
 choice
 	prompt "Output format"
-	default APP_OUTPUT_FORMAT_CUSTOM
+	default APP_OUTPUT_FORMAT_CSV
 
 config APP_OUTPUT_FORMAT_CSV
 	bool "CSV"
