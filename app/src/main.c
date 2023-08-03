@@ -21,7 +21,7 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(abe, CONFIG_APPLICATION_LOG_LEVEL);
 
-#define SENSOR_THREAD_STACK_SIZE 384
+#define SENSOR_THREAD_STACK_SIZE 1024
 #define SENSOR_THREAD_PRIORITY 1
 
 enum device_state_t {
@@ -850,10 +850,10 @@ static int ess_readings_handler(const struct shell *sh, size_t argc, char **argv
 		"temperature,"
 #endif
 #ifdef CONFIG_APP_ESS_HUMIDITY
-		"pressure,"
+		"humidity,"
 #endif
 #ifdef CONFIG_APP_ESS_PRESSURE
-		"humidity,"
+		"pressure,"
 #endif
 #ifdef CONFIG_APP_ESS_DEW_POINT
 		"dewpoint,"
