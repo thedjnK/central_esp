@@ -590,6 +590,13 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 		bt_conn_unref(conn);
 		devices[current_index].state = STATE_IDLE;
 		busy = false;
+
+		++current_index;
+
+		if (current_index >= DEVICE_COUNT) {
+			current_index = 0;
+		}
+
 		k_sem_give(&next_action_sem);
 
 		return;
