@@ -1,0 +1,43 @@
+'//this identifies the target platform
+platform h'000B654F
+
+'//Device address map SD+APP+FFS using handle 0 (has only 1 bank)
+register 0 h'00001000 1 h'EC000 1
+
+'//-----------------------------------------
+'// Erase 0x01000 - 0xED000 and add SD+APP+FFS
+'//-----------------------------------------
+'//Select device 0 and bank 0  (SD+APP+FFS)
+selectdevice 0 0
+
+'//Specify sector map
+sectormap h'EC h'1000
+
+'//Specify word alignment
+alignaddr 4
+alignlen 4
+
+'//Erase all sectors from absolute address 0x1000 to 0xED000
+eraseblock h'00026000 h'38000
+
+'//add the application (0x1000 - 0x1000) (because first 0x1000 is bootloader)
+addbinfile h'00026000 "zephyr.bin"
+
+'//-----------------------------------------
+'// Add magic string - this should be last step so that if it fails we are stuck in FUP mode
+'//-----------------------------------------
+'//Select device 0 and bank 0  (SD+APP+FFS)
+//selectdevice 0 0
+
+'//Specify word alignment
+alignaddr 1
+alignlen 1
+
+'//Finally add the magic string @ absolute address 0x27000+0x440
+'// which is offset 0x27000+0x440-0x1000 (because first 0x1000 is bootloader)
+writeblock h'00026440 0
+  wrstr "Laird_Technology_BL6xxxx"
+endwrite
+
+unregister 0
+

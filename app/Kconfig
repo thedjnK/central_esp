@@ -1,0 +1,81 @@
+# Copyright 2023 Jamie M.
+
+menu "Application settings"
+
+module = APPLICATION
+module-str = application
+source "subsys/logging/Kconfig.template.log_config"
+
+menuconfig APP_START_BOOTUP
+	bool "Start connecting at boot-up"
+	help
+	  Enables the state machine at boot-up automatically, otherwise needs
+	  to be started manually via the shell.
+
+menu "ESS profile listeners"
+
+menuconfig APP_ESS_TEMPERATURE
+	bool "Temperature"
+	default y
+	help
+	  Enables subscribing to and outputting temperature readings.
+
+menuconfig APP_ESS_HUMIDITY
+	bool "Humidity"
+	default y
+	help
+	  Enables subscribing to and outputting humidity readings.
+
+menuconfig APP_ESS_PRESSURE
+	bool "Pressure"
+	default y
+	help
+	  Enables subscribing to and outputting pressure readings.
+
+menuconfig APP_ESS_DEW_POINT
+	bool "Dew point"
+	default y
+	help
+	  Enables subscribing to and outputting dew point readings.
+
+endmenu
+
+menuconfig APP_BATTERY_LEVEL
+	bool "Battery level"
+	default y
+	help
+	  Enables subscribing to and outputting battery level.
+
+choice
+	prompt "Output format"
+	default APP_OUTPUT_FORMAT_CUSTOM
+
+config APP_OUTPUT_FORMAT_CSV
+	bool "CSV"
+	help
+	  Output will be in CSV format, with headings of each field.
+
+config APP_OUTPUT_FORMAT_CUSTOM
+	bool "Custom"
+	help
+	  Output will be in custom concise format, without headings
+
+endchoice
+
+menu "Output fields"
+
+menuconfig APP_OUTPUT_DEVICE_ADDRESS
+	bool "Device address"
+	help
+	  Include device Bluetooth address in output.
+
+menuconfig APP_OUTPUT_DEVICE_NAME
+	bool "Device name"
+	help
+	  Include device name (from struct) in output.
+
+endmenu
+
+endmenu
+
+source "Kconfig.zephyr"
