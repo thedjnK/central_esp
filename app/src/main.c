@@ -158,7 +158,7 @@ struct device_params {
 	const char *name;
 };
 
-static struct device_params devices[2] = {
+static struct device_params devices[3] = {
 	{
 		.address = {
 			.type = BT_ADDR_LE_RANDOM,
@@ -172,6 +172,13 @@ static struct device_params devices[2] = {
 			.a.val = { 0x22, 0x07, 0x7b, 0x1c, 0xb2, 0xf7 },
 		},
 		.name = "Server Room",
+	},
+	{
+		.address = {
+			.type = BT_ADDR_LE_RANDOM,
+			.a.val = { 0x8d, 0xfb, 0x86, 0xbe, 0x1e, 0xfe },
+		},
+		.name = "Plant area",
 	}
 };
 
@@ -423,41 +430,6 @@ static void next_action(struct bt_conn *conn, const struct bt_gatt_attr *attr)
 	};
 
 LOG_ERR("action is %d, state is %d", action, devices[current_index].handles.status);
-
-#if 0
-LOG_ERR("FIND_ESS_SERVICE = %d", FIND_ESS_SERVICE);
-#ifdef CONFIG_APP_ESS_TEMPERATURE
-LOG_ERR("FIND_TEMPERATURE = %d\nFIND_TEMPERATURE_CCC = %d", FIND_TEMPERATURE, FIND_TEMPERATURE_CCC);
-#endif
-#ifdef CONFIG_APP_ESS_HUMIDITY
-LOG_ERR("FIND_HUMIDITY = %d\nFIND_HUMIDITY_CCC = %d", FIND_HUMIDITY, FIND_HUMIDITY_CCC);
-#endif
-#ifdef CONFIG_APP_ESS_PRESSURE
-LOG_ERR("FIND_PRESSURE = %d\nFIND_PRESSURE_CCC = %d", FIND_PRESSURE, FIND_PRESSURE_CCC);
-#endif
-#ifdef CONFIG_APP_ESS_DEW_POINT
-LOG_ERR("FIND_DEW_POINT = %d\nFIND_DEW_POINT_CCC = %d", FIND_DEW_POINT, FIND_DEW_POINT_CCC);
-#endif
-#ifdef CONFIG_APP_BATTERY_LEVEL
-LOG_ERR("FIND_BATTERY_LEVEL = %d\nFIND_BATTERY_LEVEL_CCC = %d", FIND_BATTERY_LEVEL, FIND_BATTERY_LEVEL_CCC);
-#endif
-#ifdef CONFIG_APP_ESS_TEMPERATURE
-LOG_ERR("SUBSCRIBE_TEMPERATURE = %d", SUBSCRIBE_TEMPERATURE);
-#endif
-#ifdef CONFIG_APP_ESS_HUMIDITY
-LOG_ERR("SUBSCRIBE_HUMDIITY = %d", SUBSCRIBE_HUMDIITY);
-#endif
-#ifdef CONFIG_APP_ESS_PRESSURE
-LOG_ERR("SUBSCRIBE_PRESSURE = %d", SUBSCRIBE_PRESSURE);
-#endif
-#ifdef CONFIG_APP_ESS_DEW_POINT
-LOG_ERR("SUBSCRIBE_DEW_POINT = %d", SUBSCRIBE_DEW_POINT);
-#endif
-#ifdef CONFIG_APP_BATTERY_LEVEL
-LOG_ERR("SUBSCRIBE_BATTERY_LEVEL = %d", SUBSCRIBE_BATTERY_LEVEL);
-#endif
-LOG_ERR("AWAITING_READINGS = %d", AWAITING_READINGS);
-#endif
 
 	if (action == 0) {
 		/* Find characteristic of service */
