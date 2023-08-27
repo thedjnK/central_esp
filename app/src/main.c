@@ -158,14 +158,9 @@ struct device_params {
 	const char *name;
 };
 
-static struct device_params devices[3] = {
-	{
-		.address = {
-			.type = BT_ADDR_LE_RANDOM,
-			.a.val = { 0xc5, 0x2a, 0xc2, 0x37, 0x3e, 0xe2 },
-		},
-		.name = "Roof Network",
-	},
+static const device_id_value_offset = 1;
+
+static struct device_params devices[2] = {
 	{
 		.address = {
 			.type = BT_ADDR_LE_RANDOM,
@@ -176,10 +171,10 @@ static struct device_params devices[3] = {
 	{
 		.address = {
 			.type = BT_ADDR_LE_RANDOM,
-			.a.val = { 0x8d, 0xfb, 0x86, 0xbe, 0x1e, 0xfe },
+			.a.val = { 0xc5, 0x2a, 0xc2, 0x37, 0x3e, 0xe2 },
 		},
 		.name = "Plant area",
-	}
+	},
 };
 
 #define DEVICE_COUNT ARRAY_SIZE(devices)
@@ -860,7 +855,7 @@ static int ess_readings_handler(const struct shell *sh, size_t argc, char **argv
 #ifdef CONFIG_APP_BATTERY_LEVEL
 				"%d,"
 #endif
-				"\n", i
+				"\n", (device_id_value_offset + i)
 #if defined(CONFIG_APP_OUTPUT_DEVICE_ADDRESS)
 				, devices[i].address.type, devices[i].address.a.val[5],
 				devices[i].address.a.val[4], devices[i].address.a.val[3],
@@ -1012,7 +1007,8 @@ static int ess_status_handler(const struct shell *sh, size_t argc, char **argv)
 	while (i < DEVICE_COUNT) {
 		char *state = state_to_text(devices[i].state);
 
-		shell_print(sh, "%d | %02x%02x%02x%02x%02x%02x%02x | %s%.*s | %s%.*s | 0x%x %s", i,
+		shell_print(sh, "%d | %02x%02x%02x%02x%02x%02x%02x | %s%.*s | %s%.*s | 0x%x %s",
+			    (device_id_value_offset + i),
 			    devices[i].address.type, devices[i].address.a.val[5],
 			    devices[i].address.a.val[4], devices[i].address.a.val[3],
 			    devices[i].address.a.val[2], devices[i].address.a.val[1],
