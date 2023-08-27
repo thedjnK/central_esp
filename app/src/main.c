@@ -158,7 +158,7 @@ struct device_params {
 	const char *name;
 };
 
-static const device_id_value_offset = 1;
+static const uint8_t device_id_value_offset = 1;
 
 static struct device_params devices[2] = {
 	{
