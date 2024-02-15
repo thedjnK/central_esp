@@ -1096,10 +1096,12 @@ static int ess_status_handler(const struct shell *sh, size_t argc, char **argv)
 	}
 
 	if (device_is_ready(dht22)) {
-		shell_print(sh, "%d | LOCAL | LOCAL | LOCAL | %s", (device_id_value_offset + i),
+		shell_print(sh, "%d | LOCAL          | LOCAL%.*s | Active      | %s", (device_id_value_offset + i),
+			    (largest_name - 5), "                  ",
 			    tick_character);
 	} else {
-		shell_print(sh, "%d | LOCAL | LOCAL | LOCAL | X", (device_id_value_offset + i));
+		shell_print(sh, "%d | LOCAL          | LOCAL%.*s | Error       |", (device_id_value_offset + i),
+			    (largest_name - 5), "                  ");
 	}
 
 	return 0;
