@@ -162,7 +162,7 @@ struct device_params {
 
 static const uint8_t device_id_value_offset = 1;
 
-static struct device_params devices[2] = {
+static struct device_params devices[3] = {
 	{
 		.address = {
 			.type = BT_ADDR_LE_RANDOM,
@@ -176,6 +176,13 @@ static struct device_params devices[2] = {
 			.a.val = { 0xc5, 0x2a, 0xc2, 0x37, 0x3e, 0xe2 },
 		},
 		.name = "Plant area",
+	},
+	{
+		.address = {
+			.type = BT_ADDR_LE_RANDOM,
+			.a.val = { 0x05, 0x55, 0x92, 0xa8, 0x8a, 0xe3 },
+		},
+		.name = "Northwind area",
 	},
 };
 
