@@ -747,6 +747,7 @@ int main(void)
 			err = sensor_sample_fetch(dht22);
 			err = sensor_channel_get(dht22, SENSOR_CHAN_AMBIENT_TEMP, &dummy);
 			err = sensor_channel_get(dht22, SENSOR_CHAN_HUMIDITY, &dummy);
+			k_sleep(K_MSEC(600));
 
 			++i;
 		}
