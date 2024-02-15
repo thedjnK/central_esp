@@ -23,7 +23,7 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(abe, CONFIG_APPLICATION_LOG_LEVEL);
 
-#define SENSOR_THREAD_STACK_SIZE 1024
+#define SENSOR_THREAD_STACK_SIZE 2048
 #define SENSOR_THREAD_PRIORITY 1
 
 enum device_state_t {
@@ -840,7 +840,7 @@ static int ess_readings_handler(const struct shell *sh, size_t argc, char **argv
 static int ess_readings_handler(const struct shell *sh, size_t argc, char **argv)
 {
 	uint8_t i = 0;
-	uint8_t buffer[256] = {0};
+	uint8_t buffer[384] = {0};
 	int err;
 	struct sensor_value humidity;
 	struct sensor_value temperature;
