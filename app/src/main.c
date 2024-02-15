@@ -9,6 +9,8 @@
 #include <stdio.h>
 #include <zephyr/kernel.h>
 #include <zephyr/types.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/sensor.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/conn.h>
@@ -132,13 +134,13 @@ struct device_handles {
 
 struct device_readings {
 #ifdef CONFIG_APP_ESS_TEMPERATURE
-	float temperature;
+	double temperature;
 #endif
 #ifdef CONFIG_APP_ESS_HUMIDITY
-	float humidity;
+	double humidity;
 #endif
 #ifdef CONFIG_APP_ESS_PRESSURE
-	float pressure;
+	double pressure;
 #endif
 #ifdef CONFIG_APP_ESS_DEW_POINT
 	int8_t dew_point;
@@ -193,6 +195,8 @@ static struct k_work subscribe_workqueue;
 
 const char tick_character[] = {0xe2, 0x9c, 0x93, 0x00};
 
+const struct device *const dht22 = DEVICE_DT_GET_ONE(aosong_dht);
+
 static uint8_t notify_func(struct bt_conn *conn, struct bt_gatt_subscribe_params *params,
 			   const void *data, uint16_t length)
 {
@@ -223,10 +227,10 @@ static uint8_t notify_func(struct bt_conn *conn, struct bt_gatt_subscribe_params
 #ifdef CONFIG_APP_ESS_TEMPERATURE
 	} else if (params == &devices[i].handles.temperature) {
 		uint16_t value;
-		float fp_value;
+		double fp_value;
 
 		value = sys_get_le16(&((uint8_t *)data)[0]);
-		fp_value = ((float)value) / 100.0;
+		fp_value = ((double)value) / 100.0;
 
 		devices[i].readings.temperature = fp_value;
 		devices[i].readings.received |= RECEIVED_TEMPERATURE;
@@ -235,10 +239,10 @@ LOG_ERR("temp = %fc", fp_value);
 #ifdef CONFIG_APP_ESS_HUMIDITY
 	} else if (params == &devices[i].handles.humidity) {
 		uint16_t value;
-		float fp_value;
+		double fp_value;
 
 		value = sys_get_le16(&((uint8_t *)data)[0]);
-		fp_value = ((float)value) / 100.0;
+		fp_value = ((double)value) / 100.0;
 
 		devices[i].readings.humidity = fp_value;
 		devices[i].readings.received |= RECEIVED_HUMIDITY;
@@ -248,10 +252,10 @@ LOG_ERR("hum = %f%c", fp_value, '%');
 #ifdef CONFIG_APP_ESS_PRESSURE
 	} else if (params == &devices[i].handles.pressure) {
 		uint32_t value;
-		float fp_value;
+		double fp_value;
 
 		value = sys_get_le32(&((uint8_t *)data)[0]);
-		fp_value = (float)value;
+		fp_value = (double)value;
 
 		devices[i].readings.pressure = fp_value;
 		devices[i].readings.received |= RECEIVED_PRESSURE;
@@ -727,6 +731,28 @@ int main(void)
 					   sensor_function, NULL, NULL, NULL,
 					   SENSOR_THREAD_PRIORITY, 0, K_NO_WAIT);
 
+	if (!device_is_ready(dht22)) {
+		LOG_ERR("Sensor init failed");
+	} else {
+		/* Read 5 sets of readings due to sensor being of incredibly shit quality and
+		 * giving many bogus readings
+		 */
+		uint8_t i = 0;
+		struct sensor_value dummy;
+
+		while (i < 5) {
+			/* Don't bother checking return code, not like the sensor manufacturer
+			 * cares to check if their product is of any actual use...
+			 */
+			err = sensor_sample_fetch(dht22);
+			err = sensor_channel_get(dht22, SENSOR_CHAN_AMBIENT_TEMP, &dummy);
+			err = sensor_channel_get(dht22, SENSOR_CHAN_HUMIDITY, &dummy);
+
+			++i;
+		}
+	}
+
+
 	return 0;
 }
 
@@ -791,6 +817,8 @@ static int ess_readings_handler(const struct shell *sh, size_t argc, char **argv
 		++i;
 	}
 
+/* Should do sht22 here */
+
 	if (strlen(buffer) > 0) {
 		buffer[(strlen(buffer) - 1)] = 0;
 	}
@@ -805,6 +833,9 @@ static int ess_readings_handler(const struct shell *sh, size_t argc, char **argv
 {
 	uint8_t i = 0;
 	uint8_t buffer[256] = {0};
+	int err;
+	struct sensor_value humidity;
+	struct sensor_value temperature;
 
 	sprintf(&buffer[0], "device,"
 #if defined(CONFIG_APP_OUTPUT_DEVICE_ADDRESS)
@@ -885,6 +916,50 @@ static int ess_readings_handler(const struct shell *sh, size_t argc, char **argv
 		}
 
 		++i;
+	}
+
+	/* Read rubbish connected sensor */
+	err = sensor_sample_fetch(dht22);
+
+	if (err == 0) {
+		err = sensor_channel_get(dht22, SENSOR_CHAN_AMBIENT_TEMP, &temperature);
+	}
+
+	if (err == 0) {
+		err = sensor_channel_get(dht22, SENSOR_CHAN_HUMIDITY, &humidity);
+	}
+
+	if (err == 0) {
+		sprintf(&buffer[strlen(buffer)], "%d,"
+#if defined(CONFIG_APP_OUTPUT_DEVICE_ADDRESS)
+			"LOCAL,"
+#endif
+#if defined(CONFIG_APP_OUTPUT_DEVICE_NAME)
+			"LOCAL,"
+#endif
+#ifdef CONFIG_APP_ESS_TEMPERATURE
+			"%.2f,"
+#endif
+#ifdef CONFIG_APP_ESS_HUMIDITY
+			"%.2f,"
+#endif
+#ifdef CONFIG_APP_ESS_PRESSURE
+			"0,"
+#endif
+#ifdef CONFIG_APP_ESS_DEW_POINT
+			"0,"
+#endif
+#ifdef CONFIG_APP_BATTERY_LEVEL
+			"0,"
+#endif
+			"\n", (device_id_value_offset + i)
+#ifdef CONFIG_APP_ESS_TEMPERATURE
+			, sensor_value_to_double(&temperature)
+#endif
+#ifdef CONFIG_APP_ESS_HUMIDITY
+			, sensor_value_to_double(&humidity)
+#endif
+			);
 	}
 
 	shell_print(sh, "%s\n", buffer);
@@ -1018,6 +1093,13 @@ static int ess_status_handler(const struct shell *sh, size_t argc, char **argv)
 			    devices[i].readings.received,
 			    (devices[i].readings.received == RECEIVED_ALL ? tick_character : ""));
 		++i;
+	}
+
+	if (device_is_ready(dht22)) {
+		shell_print(sh, "%d | LOCAL | LOCAL | LOCAL | %s", (device_id_value_offset + i),
+			    tick_character);
+	} else {
+		shell_print(sh, "%d | LOCAL | LOCAL | LOCAL | X", (device_id_value_offset + i));
 	}
 
 	return 0;
