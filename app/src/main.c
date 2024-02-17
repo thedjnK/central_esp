@@ -20,6 +20,7 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/addr.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/reboot.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/pm/device.h>
 #include <zephyr/dt-bindings/gpio/nordic-nrf-gpio.h>
@@ -1207,7 +1208,14 @@ static int fan_speed_handler(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-static int bootloader_enter_handler(const struct shell *sh, size_t argc, char **argv)
+static int app_reboot_handler(const struct shell *sh, size_t argc, char **argv)
+{
+        sys_reboot(SYS_REBOOT_COLD);
+
+	return 0;
+}
+
+static int app_bootloader_handler(const struct shell *sh, size_t argc, char **argv)
 {
 	int err;
 
@@ -1218,8 +1226,6 @@ static int bootloader_enter_handler(const struct shell *sh, size_t argc, char **
 
 		if (err < 0) {
 			shell_print(sh, "GPIO set failed");
-		} else {
-			shell_print(sh, "GPIO set");
 		}
 	}
 
@@ -1250,12 +1256,13 @@ SHELL_STATIC_SUBCMD_SET_CREATE(fan_cmd,
 
 SHELL_CMD_REGISTER(fan, &fan_cmd, "Fan commands", NULL);
 
-SHELL_STATIC_SUBCMD_SET_CREATE(bootloader_cmd,
+SHELL_STATIC_SUBCMD_SET_CREATE(app_cmd,
 	/* Command handlers */
-	SHELL_CMD(enter, NULL, "Enter bootloader", bootloader_enter_handler),
+	SHELL_CMD(reboot, NULL, "Reboot", app_reboot_handler),
+	SHELL_CMD(bootloader, NULL, "Enter bootloader", app_bootloader_handler),
 
 	/* Array terminator. */
 	SHELL_SUBCMD_SET_END
 );
 
-SHELL_CMD_REGISTER(bootloader, &bootloader_cmd, "Bootloader commands", NULL);
+SHELL_CMD_REGISTER(app, &app_cmd, "Application commands", NULL);
