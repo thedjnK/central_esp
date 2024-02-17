@@ -11,6 +11,8 @@
 #include <zephyr/types.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/sensor.h>
+#include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/pwm.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/conn.h>
@@ -19,12 +21,15 @@
 #include <zephyr/bluetooth/addr.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/shell/shell.h>
+#include <zephyr/pm/device.h>
+#include <zephyr/dt-bindings/gpio/nordic-nrf-gpio.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(abe, CONFIG_APPLICATION_LOG_LEVEL);
 
 #define SENSOR_THREAD_STACK_SIZE 2048
 #define SENSOR_THREAD_PRIORITY 1
+#define PWM_MAX_PERIOD PWM_SEC(1U) / 64U
 
 enum device_state_t {
 	STATE_IDLE = 0,
@@ -200,9 +205,14 @@ static k_tid_t sensor_thread_id;
 static struct k_thread sensor_thread;
 static struct k_work subscribe_workqueue;
 
-const char tick_character[] = {0xe2, 0x9c, 0x93, 0x00};
+static const char tick_character[] = {0xe2, 0x9c, 0x93, 0x00};
 
-const struct device *const dht22 = DEVICE_DT_GET_ONE(aosong_dht);
+static bool pwm_enabled = true;
+
+static const struct device *const dht22 = DEVICE_DT_GET_ONE(aosong_dht);
+static const struct pwm_dt_spec fan_pwm = PWM_DT_SPEC_GET(DT_NODELABEL(fan_pwm));
+static const struct gpio_dt_spec reset = GPIO_DT_SPEC_GET(DT_NODELABEL(reset_pin), gpios);
+static const struct gpio_dt_spec fan_pin = GPIO_DT_SPEC_GET(DT_NODELABEL(fan_pin), gpios);
 
 static uint8_t notify_func(struct bt_conn *conn, struct bt_gatt_subscribe_params *params,
 			   const void *data, uint16_t length)
@@ -760,6 +770,21 @@ int main(void)
 		}
 	}
 
+	if (!pwm_is_ready_dt(&fan_pwm)) {
+		LOG_ERR("PWM init failed");
+	} else {
+		/* Disable PWM and use as GPIO */
+		err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, 0);
+
+		err = pm_device_action_run(fan_pwm.dev, PM_DEVICE_ACTION_SUSPEND);
+
+		if (!err) {
+			pwm_enabled = false;
+		}
+
+		err = gpio_pin_configure_dt(&fan_pin, GPIO_OUTPUT_INACTIVE);
+
+	}
 
 	return 0;
 }
@@ -1115,6 +1140,92 @@ static int ess_status_handler(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+static int fan_speed_handler(const struct shell *sh, size_t argc, char **argv)
+{
+	uint32_t speed;
+	int err;
+
+	speed = strtoul(argv[1], NULL, 0);
+
+	if (pwm_is_ready_dt(&fan_pwm)) {
+		if (speed > 100) {
+			shell_print(sh, "Invalid speed, must be between 0-100");
+		} else {
+			if (speed == 0) {
+				/* Disable PWM mode and use GPIO mode */
+				if (pwm_enabled) {
+					err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, 0);
+					err = pm_device_action_run(fan_pwm.dev, PM_DEVICE_ACTION_SUSPEND);
+
+					if (!err) {
+						pwm_enabled = false;
+					} else {
+						shell_print(sh, "PWM disable failed: %d", err);
+					}
+				}
+
+				err = gpio_pin_configure_dt(&fan_pin, GPIO_OUTPUT_INACTIVE | NRF_GPIO_DRIVE_H0H1);
+			} else if (speed == 100) {
+				/* Disable PWM mode and use GPIO mode */
+				if (pwm_enabled) {
+					err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, 0);
+					err = pm_device_action_run(fan_pwm.dev, PM_DEVICE_ACTION_SUSPEND);
+
+					if (!err) {
+						pwm_enabled = false;
+					} else {
+						shell_print(sh, "PWM disable failed: %d", err);
+					}
+				}
+
+				err = gpio_pin_configure_dt(&fan_pin, GPIO_OUTPUT_ACTIVE | NRF_GPIO_DRIVE_H0H1);
+			} else {
+				if (!pwm_enabled) {
+					err = gpio_pin_configure_dt(&fan_pin, GPIO_OUTPUT_INACTIVE);
+					err = pm_device_action_run(fan_pwm.dev, PM_DEVICE_ACTION_RESUME);
+
+					shell_print(sh, "pwm enable: %d", err);
+					if (!err) {
+						pwm_enabled = true;
+					}
+				}
+
+				speed = (PWM_MAX_PERIOD * speed / 100U);
+				err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, speed);
+			}
+
+			if (err) {
+				shell_print(sh, "Error: %d", err);
+			} else {
+				shell_print(sh, "Fan speed set");
+			}
+		}
+	} else {
+		shell_print(sh, "PWM is not ready");
+	}
+
+	return 0;
+}
+
+static int bootloader_enter_handler(const struct shell *sh, size_t argc, char **argv)
+{
+	int err;
+
+	if (!gpio_is_ready_dt(&reset)) {
+		shell_print(sh, "GPIO is not ready");
+	} else {
+		err = gpio_pin_configure_dt(&reset, GPIO_OUTPUT_ACTIVE);
+
+		if (err < 0) {
+			shell_print(sh, "GPIO set failed");
+		} else {
+			shell_print(sh, "GPIO set");
+		}
+	}
+
+	return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(ess_cmd,
 	/* Command handlers */
 	SHELL_CMD(readings, NULL, "Output ESS values", ess_readings_handler),
@@ -1128,3 +1239,23 @@ SHELL_STATIC_SUBCMD_SET_CREATE(ess_cmd,
 );
 
 SHELL_CMD_REGISTER(ess, &ess_cmd, "ESS profile commands", NULL);
+
+SHELL_STATIC_SUBCMD_SET_CREATE(fan_cmd,
+	/* Command handlers */
+	SHELL_CMD(speed, NULL, "Change fan speed", fan_speed_handler),
+
+	/* Array terminator. */
+	SHELL_SUBCMD_SET_END
+);
+
+SHELL_CMD_REGISTER(fan, &fan_cmd, "Fan commands", NULL);
+
+SHELL_STATIC_SUBCMD_SET_CREATE(bootloader_cmd,
+	/* Command handlers */
+	SHELL_CMD(enter, NULL, "Enter bootloader", bootloader_enter_handler),
+
+	/* Array terminator. */
+	SHELL_SUBCMD_SET_END
+);
+
+SHELL_CMD_REGISTER(bootloader, &bootloader_cmd, "Bootloader commands", NULL);

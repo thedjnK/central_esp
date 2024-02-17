@@ -1,8 +1,51 @@
+
+#include <zephyr/dt-bindings/gpio/nordic-nrf-gpio.h>
+
 / {
 	am2302 {
 		compatible = "aosong,dht";
 		status = "okay";
 		dio-gpios = <&gpio0 31 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
 		dht22;
+	};
+
+	/delete-node/ red_pwm_led;
+	/delete-node/ green_pwm_led;
+	/delete-node/ blue_pwm_led;
+	/delete-node/ pwm0_default;
+	/delete-node/ pwm0_sleep;
+
+	/* Do this properly one day */
+	pwm_output {
+		compatible = "pwm-leds";
+		fan_pwm: pwm_output_0 {
+			pwms = <&pwm0 0 PWM_MSEC(60) 0>;
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		reset_pin: reset_0 {
+			gpios = <&gpio0 19 GPIO_ACTIVE_LOW>;
+		};
+		fan_pin: fan_pin_0 {
+			gpios = <&gpio1 13 (GPIO_ACTIVE_HIGH | NRF_GPIO_DRIVE_H0H1)>;
+		};
+	};
+};
+
+&pinctrl {
+	pwm0_default: pwm0_default {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 1, 13)>;
+			nordic,drive-mode = <NRF_DRIVE_H0H1>;
+		};
+	};
+
+	pwm0_sleep: pwm0_sleep {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 1, 13)>;
+			low-power-enable;
+		};
 	};
 };
