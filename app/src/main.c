@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <errno.h>
 #include <stdio.h>
+#include <app_version.h>
 #include <zephyr/kernel.h>
 #include <zephyr/types.h>
 #include <zephyr/device.h>
@@ -209,6 +210,7 @@ static struct k_work subscribe_workqueue;
 static const char tick_character[] = {0xe2, 0x9c, 0x93, 0x00};
 
 static bool pwm_enabled = true;
+static uint8_t last_speed = 0;
 
 static const struct device *const dht22 = DEVICE_DT_GET_ONE(aosong_dht);
 static const struct pwm_dt_spec fan_pwm = PWM_DT_SPEC_GET(DT_NODELABEL(fan_pwm));
@@ -1143,66 +1145,73 @@ static int ess_status_handler(const struct shell *sh, size_t argc, char **argv)
 
 static int fan_speed_handler(const struct shell *sh, size_t argc, char **argv)
 {
-	uint32_t speed;
 	int err;
 
-	speed = strtoul(argv[1], NULL, 0);
-
-	if (pwm_is_ready_dt(&fan_pwm)) {
-		if (speed > 100) {
-			shell_print(sh, "Invalid speed, must be between 0-100");
-		} else {
-			if (speed == 0) {
-				/* Disable PWM mode and use GPIO mode */
-				if (pwm_enabled) {
-					err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, 0);
-					err = pm_device_action_run(fan_pwm.dev, PM_DEVICE_ACTION_SUSPEND);
-
-					if (!err) {
-						pwm_enabled = false;
-					} else {
-						shell_print(sh, "PWM disable failed: %d", err);
-					}
-				}
-
-				err = gpio_pin_configure_dt(&fan_pin, GPIO_OUTPUT_INACTIVE | NRF_GPIO_DRIVE_H0H1);
-			} else if (speed == 100) {
-				/* Disable PWM mode and use GPIO mode */
-				if (pwm_enabled) {
-					err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, 0);
-					err = pm_device_action_run(fan_pwm.dev, PM_DEVICE_ACTION_SUSPEND);
-
-					if (!err) {
-						pwm_enabled = false;
-					} else {
-						shell_print(sh, "PWM disable failed: %d", err);
-					}
-				}
-
-				err = gpio_pin_configure_dt(&fan_pin, GPIO_OUTPUT_ACTIVE | NRF_GPIO_DRIVE_H0H1);
-			} else {
-				if (!pwm_enabled) {
-					err = gpio_pin_configure_dt(&fan_pin, GPIO_OUTPUT_INACTIVE);
-					err = pm_device_action_run(fan_pwm.dev, PM_DEVICE_ACTION_RESUME);
-
-					shell_print(sh, "pwm enable: %d", err);
-					if (!err) {
-						pwm_enabled = true;
-					}
-				}
-
-				speed = (PWM_MAX_PERIOD * speed / 100U);
-				err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, speed);
-			}
-
-			if (err) {
-				shell_print(sh, "Error: %d", err);
-			} else {
-				shell_print(sh, "Fan speed set");
-			}
-		}
+	if (strcmp(argv[1], "get") == 0) {
+		shell_print(sh, "Fan speed: %u", last_speed);
 	} else {
-		shell_print(sh, "PWM is not ready");
+		uint32_t speed = strtoul(argv[1], NULL, 0);
+
+		if (pwm_is_ready_dt(&fan_pwm)) {
+			if (speed > 100) {
+				shell_print(sh, "Invalid speed, must be between 0-100");
+			} else {
+				if (speed == 0) {
+					/* Disable PWM mode and use GPIO mode */
+					if (pwm_enabled) {
+						err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, 0);
+						err = pm_device_action_run(fan_pwm.dev, PM_DEVICE_ACTION_SUSPEND);
+
+						if (!err) {
+							pwm_enabled = false;
+						} else {
+							shell_print(sh, "PWM disable failed: %d", err);
+						}
+					}
+
+					err = gpio_pin_configure_dt(&fan_pin, GPIO_OUTPUT_INACTIVE | NRF_GPIO_DRIVE_H0H1);
+					last_speed = 0;
+				} else if (speed == 100) {
+					/* Disable PWM mode and use GPIO mode */
+					if (pwm_enabled) {
+						err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, 0);
+						err = pm_device_action_run(fan_pwm.dev, PM_DEVICE_ACTION_SUSPEND);
+
+						if (!err) {
+							pwm_enabled = false;
+						} else {
+							shell_print(sh, "PWM disable failed: %d", err);
+						}
+					}
+
+					err = gpio_pin_configure_dt(&fan_pin, GPIO_OUTPUT_ACTIVE | NRF_GPIO_DRIVE_H0H1);
+					last_speed = 100;
+				} else {
+					if (!pwm_enabled) {
+						err = gpio_pin_configure_dt(&fan_pin, GPIO_OUTPUT_INACTIVE);
+						err = pm_device_action_run(fan_pwm.dev, PM_DEVICE_ACTION_RESUME);
+
+						if (!err) {
+							pwm_enabled = true;
+						} else {
+							shell_print(sh, "PWM enable failed: %d", err);
+						}
+					}
+
+					last_speed = speed;
+					speed = (PWM_MAX_PERIOD * speed / 100U);
+					err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, speed);
+				}
+
+				if (err) {
+					shell_print(sh, "Error: %d", err);
+				} else {
+					shell_print(sh, "Fan speed set");
+				}
+			}
+		} else {
+			shell_print(sh, "PWM is not ready");
+		}
 	}
 
 	return 0;
@@ -1228,6 +1237,13 @@ static int app_bootloader_handler(const struct shell *sh, size_t argc, char **ar
 			shell_print(sh, "GPIO set failed");
 		}
 	}
+
+	return 0;
+}
+
+static int app_version_handler(const struct shell *sh, size_t argc, char **argv)
+{
+	shell_print(sh, "Version: %s", APP_VERSION_TWEAK_STRING);
 
 	return 0;
 }
@@ -1260,6 +1276,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(app_cmd,
 	/* Command handlers */
 	SHELL_CMD(reboot, NULL, "Reboot", app_reboot_handler),
 	SHELL_CMD(bootloader, NULL, "Enter bootloader", app_bootloader_handler),
+	SHELL_CMD(version, NULL, "Show version", app_version_handler),
 
 	/* Array terminator. */
 	SHELL_SUBCMD_SET_END
