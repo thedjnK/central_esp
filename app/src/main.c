@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Jamie M.
+ * Copyright (c) 2023-2024 Jamie M.
  *
  * All right reserved. This code is not apache or FOSS/copyleft licensed.
  */
@@ -216,6 +216,8 @@ static const struct device *const dht22 = DEVICE_DT_GET_ONE(aosong_dht);
 static const struct pwm_dt_spec fan_pwm = PWM_DT_SPEC_GET(DT_NODELABEL(fan_pwm));
 static const struct gpio_dt_spec reset = GPIO_DT_SPEC_GET(DT_NODELABEL(reset_pin), gpios);
 static const struct gpio_dt_spec fan_pin = GPIO_DT_SPEC_GET(DT_NODELABEL(fan_pin), gpios);
+static bool last_dht_reading_pass = false;
+static uint8_t connection_failures = 0;
 
 static uint8_t notify_func(struct bt_conn *conn, struct bt_gatt_subscribe_params *params,
 			   const void *data, uint16_t length)
@@ -582,6 +584,10 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 		devices[current_index].state = STATE_IDLE;
 		busy = false;
 
+		if (connection_failures < 30) {
+			++connection_failures;
+		}
+
 		++current_index;
 
 		if (current_index >= DEVICE_COUNT) {
@@ -592,6 +598,8 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 
 		return;
 	}
+
+	connection_failures = 0;
 
 	devices[current_index].state = STATE_CONNECTED;
 	memset(&devices[current_index].handles, 0, sizeof(struct device_handles));
@@ -639,6 +647,11 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	/* Search for the instance */
 	while (i < DEVICE_COUNT) {
 		if (devices[i].connection == conn) {
+			if (devices[i].state == STATE_ACTIVE) {
+				/* Reset connection failure count to allow fast reconnection to device */
+				connection_failures = 0;
+			}
+
 			devices[i].state = STATE_IDLE;
 			devices[i].connection = NULL;
 			devices[i].handles.status = 0;
@@ -703,6 +716,15 @@ static void sensor_function(void *, void *, void *)
 		busy = true;
 		devices[current_index].state = STATE_CONNECTING;
 
+		/* If we have problems connecting then delay new connection attempts as the device is likely offline */
+		if (connection_failures >= 28) {
+			k_sleep(K_SECONDS(10));
+		} else if (connection_failures > 16) {
+			k_sleep(K_SECONDS(4));
+		} else if (connection_failures > 8) {
+			k_sleep(K_MSEC(800));
+		}
+
 		err = bt_conn_le_create(&devices[current_index].address, BT_CONN_LE_CREATE_CONN,
 					param, &devices[current_index].connection);
 
@@ -716,6 +738,22 @@ static void sensor_function(void *, void *, void *)
 int main(void)
 {
 	int err;
+
+	if (!pwm_is_ready_dt(&fan_pwm)) {
+		LOG_ERR("PWM init failed");
+	} else {
+		/* Disable PWM and use as GPIO */
+		err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, 0);
+
+		err = pm_device_action_run(fan_pwm.dev, PM_DEVICE_ACTION_SUSPEND);
+
+		if (!err) {
+			pwm_enabled = false;
+		}
+
+		err = gpio_pin_configure_dt(&fan_pin, GPIO_OUTPUT_INACTIVE);
+
+	}
 
 	err = bt_enable(NULL);
 
@@ -758,35 +796,18 @@ int main(void)
 		 * giving many bogus readings
 		 */
 		uint8_t i = 0;
-		struct sensor_value dummy;
 
 		while (i < 5) {
 			/* Don't bother checking return code, not like the sensor manufacturer
 			 * cares to check if their product is of any actual use...
 			 */
 			err = sensor_sample_fetch(dht22);
-			err = sensor_channel_get(dht22, SENSOR_CHAN_AMBIENT_TEMP, &dummy);
-			err = sensor_channel_get(dht22, SENSOR_CHAN_HUMIDITY, &dummy);
 			k_sleep(K_MSEC(600));
 
 			++i;
 		}
-	}
 
-	if (!pwm_is_ready_dt(&fan_pwm)) {
-		LOG_ERR("PWM init failed");
-	} else {
-		/* Disable PWM and use as GPIO */
-		err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, 0);
-
-		err = pm_device_action_run(fan_pwm.dev, PM_DEVICE_ACTION_SUSPEND);
-
-		if (!err) {
-			pwm_enabled = false;
-		}
-
-		err = gpio_pin_configure_dt(&fan_pin, GPIO_OUTPUT_INACTIVE);
-
+		last_dht_reading_pass = (err ? false : true);
 	}
 
 	return 0;
@@ -897,6 +918,9 @@ static int ess_readings_handler(const struct shell *sh, size_t argc, char **argv
 #endif
 		"\n");
 
+	/* Read rubbish connected sensor */
+	err = sensor_sample_fetch(dht22);
+
 	while (i < DEVICE_COUNT) {
 		if (devices[i].state == STATE_ACTIVE &&
 		    devices[i].readings.received == RECEIVED_ALL) {
@@ -954,24 +978,24 @@ static int ess_readings_handler(const struct shell *sh, size_t argc, char **argv
 		++i;
 	}
 
-	/* Read rubbish connected sensor */
-	err = sensor_sample_fetch(dht22);
-
-	if (err == 0) {
-		err = sensor_channel_get(dht22, SENSOR_CHAN_AMBIENT_TEMP, &temperature);
+	if (err) {
+		/* Wait a short period of time and try again */
+		k_sleep(K_MSEC(300));
+		err = sensor_sample_fetch(dht22);
 	}
 
-	if (err == 0) {
-		err = sensor_channel_get(dht22, SENSOR_CHAN_HUMIDITY, &humidity);
-	}
+	last_dht_reading_pass = (err ? false : true);
 
-	if (err == 0) {
+	if (!err) {
+		(void)sensor_channel_get(dht22, SENSOR_CHAN_AMBIENT_TEMP, &temperature);
+		(void)sensor_channel_get(dht22, SENSOR_CHAN_HUMIDITY, &humidity);
+
 		sprintf(&buffer[strlen(buffer)], "%d,"
 #if defined(CONFIG_APP_OUTPUT_DEVICE_ADDRESS)
 			"LOCAL,"
 #endif
 #if defined(CONFIG_APP_OUTPUT_DEVICE_NAME)
-			"LOCAL,"
+			"Loft,"
 #endif
 #ifdef CONFIG_APP_ESS_TEMPERATURE
 			"%.2f,"
@@ -1131,13 +1155,19 @@ static int ess_status_handler(const struct shell *sh, size_t argc, char **argv)
 		++i;
 	}
 
-	if (device_is_ready(dht22)) {
-		shell_print(sh, "%d | LOCAL          | LOCAL%.*s | Active      | %s", (device_id_value_offset + i),
-			    (largest_name - 5), "                  ",
-			    tick_character);
+	if (device_is_ready(dht22) && last_dht_reading_pass == true) {
+		shell_print(sh, "%d | LOCAL          | Loft%.*s | Active      | 0x%x %s", (device_id_value_offset + i),
+			    (largest_name - 4), "                  ", (0
+#ifdef CONFIG_APP_ESS_TEMPERATURE
+			    + RECEIVED_TEMPERATURE
+#endif
+#ifdef CONFIG_APP_ESS_HUMIDITY
+			    + RECEIVED_HUMIDITY
+#endif
+			    ), tick_character);
 	} else {
-		shell_print(sh, "%d | LOCAL          | LOCAL%.*s | Error       |", (device_id_value_offset + i),
-			    (largest_name - 5), "                  ");
+		shell_print(sh, "%d | LOCAL          | Loft%.*s | Error       | 0x0", (device_id_value_offset + i),
+			    (largest_name - 4), "                  ");
 	}
 
 	return 0;
