@@ -31,6 +31,9 @@ LOG_MODULE_REGISTER(abe, CONFIG_APPLICATION_LOG_LEVEL);
 
 #define SENSOR_THREAD_STACK_SIZE 2048
 #define SENSOR_THREAD_PRIORITY 1
+
+#define FAN_THREAD_STACK_SIZE 1024
+#define FAN_THREAD_PRIORITY 1
 #define PWM_MAX_PERIOD PWM_SEC(1U) / 64U
 
 enum device_state_t {
@@ -201,16 +204,22 @@ static bool busy = false; /* If true, application is busy connecting/subscribing
 static struct bt_uuid_16 uuid = BT_UUID_INIT_16(0);
 static struct bt_gatt_discover_params discover_params;
 static struct k_sem next_action_sem;
+static struct k_sem fan_sem;
 
 K_THREAD_STACK_DEFINE(sensor_thread_stack, SENSOR_THREAD_STACK_SIZE);
 static k_tid_t sensor_thread_id;
 static struct k_thread sensor_thread;
 static struct k_work subscribe_workqueue;
 
+K_THREAD_STACK_DEFINE(fan_thread_stack, FAN_THREAD_STACK_SIZE);
+static k_tid_t fan_thread_id;
+static struct k_thread fan_thread;
+
 static const char tick_character[] = {0xe2, 0x9c, 0x93, 0x00};
 
 static bool pwm_enabled = true;
-static uint8_t last_speed = 0;
+static uint8_t fan_speed = 0;
+static uint8_t current_fan_speed = 0;
 
 static const struct device *const dht22 = DEVICE_DT_GET_ONE(aosong_dht);
 static const struct pwm_dt_spec fan_pwm = PWM_DT_SPEC_GET(DT_NODELABEL(fan_pwm));
@@ -735,6 +744,101 @@ static void sensor_function(void *, void *, void *)
 	}
 }
 
+static void fan_function(void *, void *, void *)
+{
+	int err;
+
+	while (1) {
+		k_sem_take(&fan_sem, K_FOREVER);
+
+		if (!pwm_is_ready_dt(&fan_pwm)) {
+			LOG_ERR("Fan PWM is not ready");
+			continue;
+		}
+
+		if (fan_speed == current_fan_speed) {
+			/* We're already done */
+			continue;
+		} else if (fan_speed == 0) {
+			/* Disable, easy. Do this by disabling PWM mode and using GPIO mode */
+			if (pwm_enabled) {
+				err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, 0);
+				err = pm_device_action_run(fan_pwm.dev, PM_DEVICE_ACTION_SUSPEND);
+
+				if (!err) {
+					pwm_enabled = false;
+				} else {
+					LOG_ERR("PWM disable failed: %d", err);
+				}
+			}
+
+			err = gpio_pin_configure_dt(&fan_pin, GPIO_OUTPUT_INACTIVE | NRF_GPIO_DRIVE_H0H1);
+
+			if (err) {
+				LOG_ERR("GPIO configure failed: %d", err);
+			} else {
+				current_fan_speed = fan_speed;
+			}
+		} else {
+			int8_t change_increment;
+			uint8_t change_amount;
+
+			if (fan_speed > current_fan_speed) {
+				/* Increase speed gradually until we hit the target */
+				change_increment = 1;
+				change_amount = (fan_speed - current_fan_speed);
+			} else {
+				/* Decrease speed gradually until we hit the target */
+				change_increment = -1;
+				change_amount = (current_fan_speed - fan_speed);
+			}
+
+			if (!pwm_enabled) {
+				err = gpio_pin_configure_dt(&fan_pin, GPIO_OUTPUT_INACTIVE);
+				err = pm_device_action_run(fan_pwm.dev, PM_DEVICE_ACTION_RESUME);
+
+				if (!err) {
+					pwm_enabled = true;
+				} else {
+					LOG_ERR("PWM enable failed: %d", err);
+				}
+			}
+
+			while (change_amount > 0) {
+				current_fan_speed = (uint8_t)((int8_t)current_fan_speed + change_increment);
+				err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, (PWM_MAX_PERIOD * current_fan_speed / 100U));
+
+				if (err) {
+					LOG_ERR("PWM set failed: %d (speed: %d)", err, current_fan_speed);
+				}
+
+				--change_amount;
+				k_sleep(K_MSEC(30));
+			}
+
+			if (current_fan_speed == 100) {
+				/* Disable PWM mode and use GPIO mode */
+				if (pwm_enabled) {
+					err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, 0);
+					err = pm_device_action_run(fan_pwm.dev, PM_DEVICE_ACTION_SUSPEND);
+
+					if (!err) {
+						pwm_enabled = false;
+					} else {
+						LOG_ERR("PWM disable failed: %d", err);
+					}
+				}
+
+				err = gpio_pin_configure_dt(&fan_pin, GPIO_OUTPUT_ACTIVE | NRF_GPIO_DRIVE_H0H1);
+
+				if (err) {
+					LOG_ERR("GPIO configure failed: %d", err);
+				}
+			}
+		}
+	}
+}
+
 int main(void)
 {
 	int err;
@@ -765,6 +869,7 @@ int main(void)
 	LOG_ERR("Bluetooth initialized");
 
 	k_sem_init(&next_action_sem, 1, 1);
+	k_sem_init(&fan_sem, 0, 1);
 	k_work_init(&subscribe_workqueue, subscribe_work);
 
 /* */
@@ -783,11 +888,16 @@ int main(void)
 	disabled = true;
 #endif
 
-/* */
+	/* Setup threads */
 	sensor_thread_id = k_thread_create(&sensor_thread, sensor_thread_stack,
 					   K_THREAD_STACK_SIZEOF(sensor_thread_stack),
 					   sensor_function, NULL, NULL, NULL,
 					   SENSOR_THREAD_PRIORITY, 0, K_NO_WAIT);
+
+	fan_thread_id = k_thread_create(&fan_thread, fan_thread_stack,
+					K_THREAD_STACK_SIZEOF(fan_thread_stack),
+					fan_function, NULL, NULL, NULL,
+					FAN_THREAD_PRIORITY, 0, K_NO_WAIT);
 
 	if (!device_is_ready(dht22)) {
 		LOG_ERR("Sensor init failed");
@@ -797,12 +907,12 @@ int main(void)
 		 */
 		uint8_t i = 0;
 
-		while (i < 5) {
+		while (i < 3) {
 			/* Don't bother checking return code, not like the sensor manufacturer
 			 * cares to check if their product is of any actual use...
 			 */
 			err = sensor_sample_fetch(dht22);
-			k_sleep(K_MSEC(600));
+			k_sleep(K_MSEC(1200));
 
 			++i;
 		}
@@ -1175,72 +1285,23 @@ static int ess_status_handler(const struct shell *sh, size_t argc, char **argv)
 
 static int fan_speed_handler(const struct shell *sh, size_t argc, char **argv)
 {
-	int err;
-
-	if (strcmp(argv[1], "get") == 0) {
-		shell_print(sh, "Fan speed: %u", last_speed);
+//	if (strcmp(argv[1], "get") == 0) {
+	if (argc == 1) {
+		shell_print(sh, "Fan speed: %u", fan_speed);
+	} else if (strcmp(argv[1], "get") == 0) {
+/* Legacy, to be removed */
+		shell_print(sh, "Fan speed: %u", fan_speed);
+	} else if (strcmp(argv[1], "actual") == 0) {
+		shell_print(sh, "Actual fan speed: %u", current_fan_speed);
 	} else {
 		uint32_t speed = strtoul(argv[1], NULL, 0);
 
-		if (pwm_is_ready_dt(&fan_pwm)) {
-			if (speed > 100) {
-				shell_print(sh, "Invalid speed, must be between 0-100");
-			} else {
-				if (speed == 0) {
-					/* Disable PWM mode and use GPIO mode */
-					if (pwm_enabled) {
-						err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, 0);
-						err = pm_device_action_run(fan_pwm.dev, PM_DEVICE_ACTION_SUSPEND);
-
-						if (!err) {
-							pwm_enabled = false;
-						} else {
-							shell_print(sh, "PWM disable failed: %d", err);
-						}
-					}
-
-					err = gpio_pin_configure_dt(&fan_pin, GPIO_OUTPUT_INACTIVE | NRF_GPIO_DRIVE_H0H1);
-					last_speed = 0;
-				} else if (speed == 100) {
-					/* Disable PWM mode and use GPIO mode */
-					if (pwm_enabled) {
-						err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, 0);
-						err = pm_device_action_run(fan_pwm.dev, PM_DEVICE_ACTION_SUSPEND);
-
-						if (!err) {
-							pwm_enabled = false;
-						} else {
-							shell_print(sh, "PWM disable failed: %d", err);
-						}
-					}
-
-					err = gpio_pin_configure_dt(&fan_pin, GPIO_OUTPUT_ACTIVE | NRF_GPIO_DRIVE_H0H1);
-					last_speed = 100;
-				} else {
-					if (!pwm_enabled) {
-						err = gpio_pin_configure_dt(&fan_pin, GPIO_OUTPUT_INACTIVE);
-						err = pm_device_action_run(fan_pwm.dev, PM_DEVICE_ACTION_RESUME);
-
-						if (!err) {
-							pwm_enabled = true;
-						} else {
-							shell_print(sh, "PWM enable failed: %d", err);
-						}
-					}
-
-					last_speed = speed;
-					speed = (PWM_MAX_PERIOD * speed / 100U);
-					err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, speed);
-				}
-
-				if (err) {
-					shell_print(sh, "Error: %d", err);
-				} else {
-					shell_print(sh, "Fan speed set");
-				}
-			}
+		if (speed > 100) {
+			shell_print(sh, "Invalid speed, must be between 0-100");
 		} else {
-			shell_print(sh, "PWM is not ready");
+			fan_speed = (uint8_t)speed;
+			k_sem_give(&fan_sem);
+			shell_print(sh, "Fan speed set");
 		}
 	}
 
