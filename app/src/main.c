@@ -813,7 +813,7 @@ static void fan_function(void *, void *, void *)
 				}
 
 				--change_amount;
-				k_sleep(K_MSEC(30));
+				k_sleep(K_MSEC(50));
 			}
 
 			if (current_fan_speed == 100) {
