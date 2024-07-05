@@ -220,6 +220,8 @@ static const char tick_character[] = {0xe2, 0x9c, 0x93, 0x00};
 static bool pwm_enabled = true;
 static uint8_t fan_speed = 0;
 static uint8_t current_fan_speed = 0;
+static bool half_fan_speed = false;
+static bool current_half_fan_speed = false;
 
 static const struct device *const dht22 = DEVICE_DT_GET_ONE(aosong_dht);
 static const struct pwm_dt_spec fan_pwm = PWM_DT_SPEC_GET(DT_NODELABEL(fan_pwm));
@@ -481,7 +483,6 @@ LOG_ERR("action is %d, state is %d", action, devices[current_index].handles.stat
 	} else if (action == 3) {
 		/* Subscribe for notifications */
 		param->subscribe = subscribe_func;
-		param->write = NULL;
 		param->notify = notify_func;
 		param->value = BT_GATT_CCC_NOTIFY;
 
@@ -756,7 +757,7 @@ static void fan_function(void *, void *, void *)
 			continue;
 		}
 
-		if (fan_speed == current_fan_speed) {
+		if (fan_speed == current_fan_speed && half_fan_speed == current_half_fan_speed) {
 			/* We're already done */
 			continue;
 		} else if (fan_speed == 0) {
@@ -806,7 +807,7 @@ static void fan_function(void *, void *, void *)
 
 			while (change_amount > 0) {
 				current_fan_speed = (uint8_t)((int8_t)current_fan_speed + change_increment);
-				err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, (PWM_MAX_PERIOD * current_fan_speed / 100U));
+				err = pwm_set_dt(&fan_pwm, PWM_MAX_PERIOD, (PWM_MAX_PERIOD * current_fan_speed / (half_fan_speed == true ? 200U : 100U)));
 
 				if (err) {
 					LOG_ERR("PWM set failed: %d (speed: %d)", err, current_fan_speed);
@@ -835,6 +836,8 @@ static void fan_function(void *, void *, void *)
 					LOG_ERR("GPIO configure failed: %d", err);
 				}
 			}
+
+			current_half_fan_speed = half_fan_speed;
 		}
 	}
 }
@@ -1285,20 +1288,35 @@ static int ess_status_handler(const struct shell *sh, size_t argc, char **argv)
 
 static int fan_speed_handler(const struct shell *sh, size_t argc, char **argv)
 {
-//	if (strcmp(argv[1], "get") == 0) {
 	if (argc == 1) {
-		shell_print(sh, "Fan speed: %u", fan_speed);
-	} else if (strcmp(argv[1], "get") == 0) {
-/* Legacy, to be removed */
-		shell_print(sh, "Fan speed: %u", fan_speed);
+		if (half_fan_speed == true) {
+			shell_print(sh, "Fan speed: %u (half)", fan_speed);
+		} else {
+			shell_print(sh, "Fan speed: %u", fan_speed);
+		}
 	} else if (strcmp(argv[1], "actual") == 0) {
-		shell_print(sh, "Actual fan speed: %u", current_fan_speed);
+		if (half_fan_speed == true) {
+			shell_print(sh, "Actual fan speed: %u (half)", current_fan_speed);
+		} else {
+			shell_print(sh, "Actual fan speed: %u", current_fan_speed);
+		}
 	} else {
 		uint32_t speed = strtoul(argv[1], NULL, 0);
 
 		if (speed > 100) {
 			shell_print(sh, "Invalid speed, must be between 0-100");
 		} else {
+			if (argc == 3) {
+				if (strcmp(argv[2], "half") == 0) {
+					half_fan_speed = true;
+				} else {
+					shell_error(sh, "Invalid option");
+					return -EINVAL;
+				}
+			} else {
+				half_fan_speed = false;
+			}
+
 			fan_speed = (uint8_t)speed;
 			k_sem_give(&fan_sem);
 			shell_print(sh, "Fan speed set");
