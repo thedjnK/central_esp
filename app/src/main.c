@@ -1038,7 +1038,7 @@ static int ess_readings_handler(const struct shell *sh, size_t argc, char **argv
 
 	while (i < DEVICE_COUNT) {
 		if (devices[i].state == STATE_ACTIVE &&
-		    devices[i].readings.received == RECEIVED_ALL) {
+		    devices[i].readings.received == devices[i].enabled_readings) {
 			sprintf(&buffer[strlen(buffer)], "%d,"
 #ifdef CONFIG_APP_ESS_TEMPERATURE
 				"%.2f,"
