@@ -27,7 +27,7 @@
 #include <zephyr/dt-bindings/gpio/nordic-nrf-gpio.h>
 
 #include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(abe, CONFIG_APPLICATION_LOG_LEVEL);
+LOG_MODULE_REGISTER(central_esp, CONFIG_APPLICATION_LOG_LEVEL);
 
 #define SENSOR_THREAD_STACK_SIZE 2048
 #define SENSOR_THREAD_PRIORITY 1
@@ -121,6 +121,15 @@ enum readings_received_t {
 			0),
 };
 
+/* Same values for enabled sensors */
+#define ENABLED_NONE RECEIVED_NONE
+#define ENABLED_TEMPERATURE RECEIVED_TEMPERATURE
+#define ENABLED_HUMIDITY RECEIVED_HUMIDITY
+#define ENABLED_PRESSURE RECEIVED_PRESSURE
+#define ENABLED_DEW_POINT RECEIVED_DEW_POINT
+#define ENABLED_BATTERY_LEVEL RECEIVED_BATTERY_LEVEL
+#define ENABLED_ALL RECEIVED_ALL
+
 struct device_handles {
 	enum handle_status_t status;
 	uint16_t service;
@@ -161,24 +170,44 @@ struct device_readings {
 	enum readings_received_t received;
 };
 
+struct enabled_readings {
+#ifdef CONFIG_APP_ESS_TEMPERATURE
+	bool temperature;
+#endif
+#ifdef CONFIG_APP_ESS_HUMIDITY
+	bool humidity;
+#endif
+#ifdef CONFIG_APP_ESS_PRESSURE
+	bool pressure;
+#endif
+#ifdef CONFIG_APP_ESS_DEW_POINT
+	bool dew_point;
+#endif
+#ifdef CONFIG_APP_BATTERY_LEVEL
+	bool battery_level;
+#endif
+};
+
 struct device_params {
 	bt_addr_le_t address;
 	enum device_state_t state;
 	struct bt_conn *connection;
 	struct device_handles handles;
 	struct device_readings readings;
+	uint8_t enabled_readings;
 	const char *name;
 };
 
 static const uint8_t device_id_value_offset = 1;
 
-static struct device_params devices[3] = {
+static struct device_params devices[] = {
 	{
 		.address = {
 			.type = BT_ADDR_LE_RANDOM,
 			.a.val = { 0x22, 0x07, 0x7b, 0x1c, 0xb2, 0xf7 },
 		},
 		.name = "Server Room",
+		.enabled_readings = ENABLED_ALL,
 	},
 	{
 		.address = {
@@ -186,6 +215,7 @@ static struct device_params devices[3] = {
 			.a.val = { 0xc5, 0x2a, 0xc2, 0x37, 0x3e, 0xe2 },
 		},
 		.name = "Plant area",
+		.enabled_readings = ENABLED_ALL,
 	},
 	{
 		.address = {
@@ -193,6 +223,15 @@ static struct device_params devices[3] = {
 			.a.val = { 0x05, 0x55, 0x92, 0xa8, 0x8a, 0xe3 },
 		},
 		.name = "Northwind area",
+		.enabled_readings = ENABLED_NONE,
+	},
+	{
+		.address = {
+			.type = BT_ADDR_LE_RANDOM,
+			.a.val = { 0x66, 0x02, 0x01, 0xf4, 0xfb, 0xce },
+		},
+		.name = "Thermfridge",
+		.enabled_readings = (ENABLED_TEMPERATURE | ENABLED_BATTERY_LEVEL),
 	},
 };
 
@@ -338,6 +377,58 @@ static void next_action(struct bt_conn *conn, const struct bt_gatt_attr *attr)
 
 	/* Increment to next state */
 	++devices[current_index].handles.status;
+
+	/* Skip states for services that are not enabled */
+#ifdef CONFIG_APP_ESS_TEMPERATURE
+	if (devices[current_index].handles.status == FIND_TEMPERATURE && !(devices[current_index].enabled_readings & ENABLED_TEMPERATURE)) {
+		devices[current_index].handles.status += 2;
+	}
+#endif
+#ifdef CONFIG_APP_ESS_HUMIDITY
+	if (devices[current_index].handles.status == FIND_HUMIDITY && (devices[current_index].enabled_readings & ENABLED_HUMIDITY) == 0) {
+		devices[current_index].handles.status += 2;
+	}
+#endif
+#ifdef CONFIG_APP_ESS_PRESSURE
+	if (devices[current_index].handles.status == FIND_PRESSURE && (devices[current_index].enabled_readings & ENABLED_PRESSURE) == 0) {
+		devices[current_index].handles.status += 2;
+	}
+#endif
+#ifdef CONFIG_APP_ESS_DEW_POINT
+	if (devices[current_index].handles.status == FIND_DEW_POINT && (devices[current_index].enabled_readings & ENABLED_DEW_POINT) == 0) {
+		devices[current_index].handles.status += 2;
+	}
+#endif
+#ifdef CONFIG_APP_BATTERY_LEVEL
+	if (devices[current_index].handles.status == FIND_BATTERY_SERVICE && (devices[current_index].enabled_readings & ENABLED_BATTERY_LEVEL) == 0) {
+		devices[current_index].handles.status += 3;
+	}
+#endif
+#ifdef CONFIG_APP_ESS_TEMPERATURE
+	if (devices[current_index].handles.status == SUBSCRIBE_TEMPERATURE && (devices[current_index].enabled_readings & ENABLED_TEMPERATURE) == 0) {
+		++devices[current_index].handles.status;
+	}
+#endif
+#ifdef CONFIG_APP_ESS_HUMIDITY
+	if (devices[current_index].handles.status == SUBSCRIBE_HUMDIITY && (devices[current_index].enabled_readings & ENABLED_HUMIDITY) == 0) {
+		++devices[current_index].handles.status;
+	}
+#endif
+#ifdef CONFIG_APP_ESS_PRESSURE
+	if (devices[current_index].handles.status == SUBSCRIBE_PRESSURE && (devices[current_index].enabled_readings & ENABLED_PRESSURE) == 0) {
+		++devices[current_index].handles.status;
+	}
+#endif
+#ifdef CONFIG_APP_ESS_DEW_POINT
+	if (devices[current_index].handles.status == SUBSCRIBE_DEW_POINT && (devices[current_index].enabled_readings & ENABLED_DEW_POINT) == 0) {
+		++devices[current_index].handles.status;
+	}
+#endif
+#ifdef CONFIG_APP_BATTERY_LEVEL
+	if (devices[current_index].handles.status == SUBSCRIBE_BATTERY_LEVEL && (devices[current_index].enabled_readings & ENABLED_BATTERY_LEVEL) == 0) {
+		++devices[current_index].handles.status;
+	}
+#endif
 
 	if (devices[current_index].handles.status == AWAITING_READINGS) {
 		/* Finished the setup state machine */
@@ -704,7 +795,7 @@ static void sensor_function(void *, void *, void *)
 		/* Check if there are any devices with states that require attention */
 		uint8_t i = 0;
 		while (i < DEVICE_COUNT) {
-			if (devices[i].state == STATE_IDLE) {
+			if (devices[i].state == STATE_IDLE && devices[i].enabled_readings != ENABLED_NONE) {
 				break;
 			}
 
@@ -715,7 +806,7 @@ static void sensor_function(void *, void *, void *)
 			continue;
 		}
 
-		while (devices[current_index].state != STATE_IDLE) {
+		while (devices[current_index].state != STATE_IDLE || devices[current_index].enabled_readings == ENABLED_NONE) {
 			++current_index;
 
 			if (current_index >= DEVICE_COUNT) {
@@ -1036,7 +1127,7 @@ static int ess_readings_handler(const struct shell *sh, size_t argc, char **argv
 
 	while (i < DEVICE_COUNT) {
 		if (devices[i].state == STATE_ACTIVE &&
-		    devices[i].readings.received == RECEIVED_ALL) {
+		    devices[i].readings.received == devices[i].enabled_readings) {
 			sprintf(&buffer[strlen(buffer)], "%d,"
 #if defined(CONFIG_APP_OUTPUT_DEVICE_ADDRESS)
 				"%02x%02x%02x%02x%02x%02x%02x,"
@@ -1093,7 +1184,7 @@ static int ess_readings_handler(const struct shell *sh, size_t argc, char **argv
 
 	if (err) {
 		/* Wait a short period of time and try again */
-		k_sleep(K_MSEC(300));
+		k_sleep(K_MSEC(800));
 		err = sensor_sample_fetch(dht22);
 	}
 
@@ -1255,6 +1346,10 @@ static int ess_status_handler(const struct shell *sh, size_t argc, char **argv)
 	while (i < DEVICE_COUNT) {
 		char *state = state_to_text(devices[i].state);
 
+		if (devices[i].enabled_readings == ENABLED_NONE) {
+			state = "Disabled";
+		}
+
 		shell_print(sh, "%d | %02x%02x%02x%02x%02x%02x%02x | %s%.*s | %s%.*s | 0x%x %s",
 			    (device_id_value_offset + i),
 			    devices[i].address.type, devices[i].address.a.val[5],
@@ -1264,7 +1359,7 @@ static int ess_status_handler(const struct shell *sh, size_t argc, char **argv)
 			    (largest_name - strlen(devices[i].name)), "                  ",
 			    state, (11 - strlen(state)), "                  ",
 			    devices[i].readings.received,
-			    (devices[i].readings.received == RECEIVED_ALL ? tick_character : ""));
+			    (devices[i].readings.received == devices[i].enabled_readings && devices[i].enabled_readings != ENABLED_NONE ? tick_character : ""));
 		++i;
 	}
 
